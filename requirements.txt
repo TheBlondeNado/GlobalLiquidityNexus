@@ -1,1 +1,8 @@
-streamlit
+streamlit==1.42.0
+xrpl-py==4.0.0
+xumm-sdk-py==1.0.4
+qrcode[pil]==8.0
+python-dotenv==1.0.1
+requests==2.32.3
+streamlit-option-menu==0.3.13
+Pillow==11.0.0streamlit
