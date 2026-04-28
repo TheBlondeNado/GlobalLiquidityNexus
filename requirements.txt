@@ -2,7 +2,7 @@ streamlit==1.38.0
 xrpl-py==4.0.0
 xumm-sdk-py==1.0.4
 qrcode[pil]==8.0
-python-dotenv==1.0.1
+python-dotenv==0.21.1
 requests==2.28.2
 streamlit-option-menu==0.3.13
 Pillow==10.4.0
