@@ -7,7 +7,7 @@ import qrcode
 from io import BytesIO
 import os
 from dotenv import load_dotenv
-
+pip install Pillow==10.4.0 --only-binary :all:
 # Load environment variables
 load_dotenv()
 
