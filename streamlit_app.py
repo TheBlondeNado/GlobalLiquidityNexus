@@ -6,8 +6,7 @@ from xrpl.utils import str_to_hex
 import qrcode
 from io import BytesIO
 import os
-from dotenv import load_dotenv
-pip install Pillow==10.4.0 --only-binary :all:
+from dotenv import load_doten
 # Load environment variables
 load_dotenv()
 
