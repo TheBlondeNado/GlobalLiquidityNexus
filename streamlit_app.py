@@ -1,12 +1,8 @@
+# app.py - Global Liquidity Nexus (GLN) - Streamlit Testnet Version
 import streamlit as st
-import xrpl
-from xrpl.clients import JsonRpcClient
-from xrpl.models.transactions import CredentialCreate, PermissionedDomainSet, EscrowCreate
-from xrpl.utils import str_to_hex
-import qrcode
-from io import BytesIO
+from dotenv import load_dotenv
 import os
-from dotenv import load_doten
+
 # Load environment variables
 load_dotenv()
 
@@ -19,15 +15,11 @@ st.set_page_config(
 st.title("🌐 Global Liquidity Nexus (GLN)")
 st.markdown("**Testnet Demo** — Native XRPL Atomic Interoperability")
 
-# Sidebar
 st.sidebar.header("Connection")
 testnet_url = st.sidebar.text_input(
     "XRPL Testnet URL", 
     value="wss://s.altnet.rippletest.net:51233"
 )
-
-# Initialize client
-client = JsonRpcClient(testnet_url)
 
 # Tabs
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -45,36 +37,26 @@ with tab1:
         if not subject_address:
             st.error("Please enter a subject address")
         else:
-            try:
-                tx = CredentialCreate(
-                    account="rIssuer...",  # You can change this later
-                    subject=subject_address,
-                    credential_type=str_to_hex("GLN_KYC_TESTNET_2026"),
-                    expiration=xrpl.utils.time_to_ripple_time(30 * 24 * 60 * 60)  # 30 days from now
-                )
-                st.success("✅ Credential transaction prepared!")
-                st.json(tx.to_dict())
-                st.info("Copy this transaction and sign it using the XUMM app.")
-            except Exception as e:
-                st.error(f"Error: {e}")
+            st.success("✅ Credential transaction prepared!")
+            st.info("In a real implementation, this would generate a CredentialCreate transaction for XUMM signing.")
+            st.code(f"""
+TransactionType: CredentialCreate
+Subject: {subject_address}
+CredentialType: GLN_KYC_TESTNET_2026
+""", language="json")
 
 with tab2:
     st.header("Create Permissioned Domain (XLS-80)")
     domain_name = st.text_input("Domain Name", value="GLN-TEST-DOMAIN")
     
     if st.button("Create Permissioned Domain", type="primary", use_container_width=True):
-        try:
-            tx = PermissionedDomainSet(
-                domain_name=domain_name,
-                accepted_credentials=[{
-                    "CredentialType": str_to_hex("GLN_KYC_TESTNET_2026")
-                }]
-            )
-            st.success("✅ Permissioned Domain transaction prepared!")
-            st.json(tx.to_dict())
-            st.info("Sign this transaction using XUMM.")
-        except Exception as e:
-            st.error(f"Error: {e}")
+        st.success("✅ Permissioned Domain transaction prepared!")
+        st.info("This would create a PermissionedDomainSet transaction.")
+        st.code(f"""
+TransactionType: PermissionedDomainSet
+DomainName: {domain_name}
+AcceptedCredentials: GLN_KYC_TESTNET_2026
+""", language="json")
 
 with tab3:
     st.header("Atomic Settlement Path")
@@ -85,20 +67,13 @@ with tab3:
         if not destination:
             st.error("Please enter a destination address")
         else:
-            try:
-                condition = xrpl.crypto.generate_xrp_condition_and_fulfillment()[0]
-                
-                tx = EscrowCreate(
-                    destination=destination,
-                    amount=amount,
-                    condition=condition,
-                    cancel_after=xrpl.utils.time_to_ripple_time(3600)  # 1 hour
-                )
-                st.success("✅ Atomic Escrow Path created!")
-                st.json(tx.to_dict())
-                st.info("Sign this transaction using XUMM.")
-            except Exception as e:
-                st.error(f"Error: {e}")
+            st.success("✅ Atomic Escrow Path created!")
+            st.info("This would create an EscrowCreate transaction with condition for atomic settlement.")
+            st.code(f"""
+TransactionType: EscrowCreate
+Destination: {destination}
+Amount: {amount}
+""", language="json")
 
 with tab4:
     st.header("Multi-Sig Governance")
@@ -111,25 +86,9 @@ with tab4:
     3. Set `SignerQuorum` to 2 (or higher)
     4. Add your signer accounts
     """)
-    
-    if st.button("Show Example SignerListSet Structure"):
-        example = {
-            "TransactionType": "SignerListSet",
-            "SignerQuorum": 2,
-            "SignerEntries": [
-                {"SignerEntry": {"Account": "rsigner1...", "SignerWeight": 1}},
-                {"SignerEntry": {"Account": "rsigner2...", "SignerWeight": 1}}
-            ]
-        }
-        st.json(example)
 
 # Footer
 st.markdown("---")
-st.caption("GLN Testnet Demo • Educational Purpose Only • No Real Value")
+st.caption("GLN Testnet Demo • Educational Purpose Only • No Real Value • Streamlit Version")
 
-# Optional QR Code Helper
-if st.button("Generate Example XUMM QR Code"):
-    qr = qrcode.make("https://xumm.app")
-    buf = BytesIO()
-    qr.save(buf, format="PNG")
-    st.image(buf.getvalue(), caption="Example XUMM QR Code")
+st.success("App is running! Use the tabs above to explore GLN features.")
