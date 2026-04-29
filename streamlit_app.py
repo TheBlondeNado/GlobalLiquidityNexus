@@ -67,6 +67,21 @@ elif wallet_option == "Import Seed":
         except Exception as e:
             st.sidebar.error(f"❌ Invalid seed: {e}")
 
+# Destination wallet support for end-to-end testnet flows
+st.sidebar.markdown("---")
+st.sidebar.header("🧾 Destination Wallet")
+destination_seed_input = st.sidebar.text_input("Import destination wallet seed", type="password")
+if st.sidebar.button("Import Destination Wallet") and destination_seed_input:
+    try:
+        st.session_state.destination_wallet = Wallet.from_seed(destination_seed_input)
+        st.sidebar.success("✅ Destination wallet imported!")
+        st.sidebar.code(f"Address: {st.session_state.destination_wallet.classic_address}")
+    except Exception as e:
+        st.sidebar.error(f"❌ Invalid destination seed: {e}")
+
+if 'destination_wallet' not in st.session_state:
+    st.session_state.destination_wallet = None
+
 # Display current wallet info
 if st.session_state.wallet:
     st.sidebar.markdown("---")
@@ -84,6 +99,21 @@ if st.session_state.wallet:
         st.sidebar.metric("XRP Balance", f"{balance:.2f}")
     except Exception as e:
         st.sidebar.warning("Unable to fetch balance")
+
+if st.session_state.destination_wallet:
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Destination Wallet")
+    st.sidebar.code(st.session_state.destination_wallet.classic_address)
+    try:
+        client = JsonRpcClient(testnet_url)
+        acct_info = client.request(AccountInfo(
+            account=st.session_state.destination_wallet.classic_address,
+            ledger_index="validated"
+        ))
+        dest_balance = int(acct_info.result["account_data"]["Balance"]) / 1000000
+        st.sidebar.metric("Destination XRP", f"{dest_balance:.2f}")
+    except Exception:
+        st.sidebar.warning("Unable to fetch destination balance")
 
 # Transaction history
 if st.session_state.transactions:
@@ -328,12 +358,6 @@ with tab3:
                 help="When the escrow expires"
             )
 
-            condition = st.text_input(
-                "Fulfillment Condition",
-                value="GLN_ATOMIC_SETTLEMENT_2026",
-                help="Condition that must be met to finish escrow"
-            )
-
         # Create escrow button
         if st.button("🔐 Create Atomic Escrow", type="primary", use_container_width=True):
             if not destination:
@@ -347,8 +371,7 @@ with tab3:
                     destination=destination,
                     amount=amount_drops,
                     finish_after=int(finish_after.timestamp()),
-                    cancel_after=int(cancel_after.timestamp()),
-                    condition=base64.b64encode(condition.encode()).decode()
+                    cancel_after=int(cancel_after.timestamp())
                 )
 
                 with st.spinner("Creating atomic escrow..."):
@@ -366,7 +389,6 @@ with tab3:
                             "Amount": f"{amount_xrp} XRP ({amount_drops} drops)",
                             "FinishAfter": finish_after.isoformat(),
                             "CancelAfter": cancel_after.isoformat(),
-                            "Condition": condition,
                             "Hash": tx_hash
                         })
 
@@ -376,21 +398,27 @@ with tab3:
                     st.markdown("---")
                     st.subheader("🏁 Finish Escrow (Destination Only)")
 
-                    if st.button("✅ Finish Escrow", use_container_width=True):
-                        # Build EscrowFinish transaction
-                        finish_tx = EscrowFinish(
-                            account=destination,  # Must be signed by destination
-                            owner=st.session_state.wallet.classic_address,
-                            fulfillment=base64.b64encode(b"GLN_ATOMIC_SETTLEMENT_2026").decode()
-                        )
+                    if st.session_state.destination_wallet:
+                        st.info("A destination wallet is imported and can finish the escrow.")
+                        if st.button("✅ Finish Escrow with Destination Wallet", use_container_width=True):
+                            finish_tx = EscrowFinish(
+                                account=st.session_state.destination_wallet.classic_address,
+                                owner=st.session_state.wallet.classic_address,
+                                fulfillment=""
+                            )
 
-                        st.warning("⚠️ This would need to be signed by the destination wallet")
-                        st.code(f"""
-TransactionType: EscrowFinish
-Account: {destination}
-Owner: {st.session_state.wallet.classic_address}
-Fulfillment: {base64.b64encode(b'GLN_ATOMIC_SETTLEMENT_2026').decode()}
-                        """, language="json")
+                            with st.spinner("Submitting EscrowFinish..."):
+                                tx_hash, response = submit_transaction(finish_tx, st.session_state.destination_wallet)
+
+                            if tx_hash:
+                                st.success(f"✅ Escrow finished! TX: {tx_hash}")
+                                st.balloons()
+                            else:
+                                st.error("❌ Escrow finish failed")
+                    else:
+                        st.warning("Import the destination wallet seed in the sidebar to finish the escrow from that address.")
+                        st.code(f"Destination account: {destination}")
+                        st.code("EscrowFinish must be signed by the destination account and submitted from that wallet.")
 
                 else:
                     st.error("❌ Escrow creation failed")
