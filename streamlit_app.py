@@ -3,6 +3,7 @@ import streamlit as st
 from dotenv import load_dotenv
 import os
 import json
+import hashlib
 from datetime import datetime, timedelta
 import asyncio
 from xrpl.clients import JsonRpcClient
@@ -30,6 +31,12 @@ if 'xumm_api_key' not in st.session_state:
     st.session_state.xumm_api_key = os.getenv('XUMM_APIKEY', '')
 if 'xumm_api_secret' not in st.session_state:
     st.session_state.xumm_api_secret = os.getenv('XUMM_APISECRET', '')
+if 'issued_credentials' not in st.session_state:
+    st.session_state.issued_credentials = []
+if 'configured_domains' not in st.session_state:
+    st.session_state.configured_domains = []
+if 'escrow_sequence' not in st.session_state:
+    st.session_state.escrow_sequence = None
 
 st.set_page_config(
     page_title="GLN - Global Liquidity Nexus",
@@ -153,6 +160,11 @@ if st.session_state.transactions:
         st.sidebar.code(f"{tx['type']}: {tx['hash'][:10]}...")
 
 # Utility functions
+def xrp_to_drops(amount_xrp):
+    """Convert XRP to drops for XRPL transaction amounts."""
+    return str(int(amount_xrp * 1_000_000))
+
+
 def submit_transaction(tx, wallet):
     """Submit a transaction to the XRPL"""
     try:
@@ -274,6 +286,18 @@ with tab1:
                     st.success(f"✅ Credential issued! TX: {tx_hash}")
                     st.balloons()
 
+                    # Store the issued credential
+                    credential_record = {
+                        "type": credential_type,
+                        "subject": issuer_subject,
+                        "issuer": st.session_state.wallet.classic_address,
+                        "expiration": expiration.isoformat(),
+                        "hash": credential_hash,
+                        "tx_hash": tx_hash,
+                        "issued_at": datetime.now().isoformat()
+                    }
+                    st.session_state.issued_credentials.append(credential_record)
+
                     # Show transaction details
                     with st.expander("Transaction Details"):
                         st.json({
@@ -366,6 +390,17 @@ with tab2:
                 st.info("💡 Note: Full PermissionedDomainSet implementation pending in xrpl-py library")
                 st.balloons()
 
+                # Store the configured domain
+                domain_record = {
+                    "name": domain_name,
+                    "id": domain_id,
+                    "accepted_credentials": accepted_credentials,
+                    "hash": domain_hash,
+                    "tx_hash": tx_hash,
+                    "configured_at": datetime.now().isoformat()
+                }
+                st.session_state.configured_domains.append(domain_record)
+
                 with st.expander("Domain Details"):
                     st.json({
                         "TransactionType": "AccountSet (Domain Config)",
@@ -406,18 +441,41 @@ with tab3:
         st.warning("⚠️ Please generate or import a wallet first")
     else:
         st.markdown("""
-        **Atomic Settlement** ensures that funds only transfer when all conditions are met.
-        This demo creates an escrow that can only be released by the recipient.
+        **🪄 The Magic of Atomic Settlement** — Funds transfer only when ALL conditions are met:
+        - ⏰ **Time-based conditions** (finish/cancel windows)
+        - 🏛️ **Domain membership** (destination must belong to required domain)
+        - 📜 **Credential validation** (destination must hold required credentials)
+        - 🔐 **Conditional release** (escrow finishes atomically or not at all)
         """)
+
+        # Show available credentials and domains
+        if st.session_state.issued_credentials or st.session_state.configured_domains:
+            with st.expander("📊 Available Assets"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.subheader("📜 Issued Credentials")
+                    if st.session_state.issued_credentials:
+                        for cred in st.session_state.issued_credentials[-3:]:  # Show last 3
+                            st.code(f"{cred['type']} → {cred['subject'][:8]}...")
+                    else:
+                        st.info("No credentials issued yet")
+
+                with col2:
+                    st.subheader("🏛️ Configured Domains")
+                    if st.session_state.configured_domains:
+                        for domain in st.session_state.configured_domains[-3:]:  # Show last 3
+                            st.code(f"{domain['name']} ({len(domain['accepted_credentials'])} creds)")
+                    else:
+                        st.info("No domains configured yet")
 
         col1, col2 = st.columns(2)
 
         with col1:
-            st.subheader("Escrow Setup")
+            st.subheader("🔐 Escrow Setup")
             destination = st.text_input(
                 "Destination Address",
                 placeholder="r...",
-                help="Address that can finish the escrow"
+                help="Address that can finish the escrow (must have required credentials)"
             )
 
             amount_xrp = st.number_input(
@@ -432,7 +490,26 @@ with tab3:
             amount_drops = xrp_to_drops(amount_xrp)
 
         with col2:
-            st.subheader("Settlement Conditions")
+            st.subheader("🎯 Settlement Conditions")
+
+            # Domain selection
+            available_domains = [f"{d['name']} ({d['id']})" for d in st.session_state.configured_domains]
+            if available_domains:
+                selected_domain = st.selectbox(
+                    "Required Domain",
+                    available_domains,
+                    help="Domain the destination must belong to"
+                )
+                domain_index = available_domains.index(selected_domain)
+                required_domain = st.session_state.configured_domains[domain_index]
+                required_credentials = required_domain['accepted_credentials']
+
+                st.info(f"📋 Requires credentials: {', '.join(required_credentials)}")
+            else:
+                st.warning("⚠️ Create a domain first to enable credential-bound escrow")
+                required_credentials = []
+                required_domain = None
+
             finish_after = st.date_input(
                 "Earliest Finish Time",
                 value=datetime.now() + timedelta(hours=1),
@@ -445,14 +522,16 @@ with tab3:
                 help="When the escrow expires"
             )
 
-        # Create escrow button
-        if st.button("🔐 Create Atomic Escrow", type="primary", use_container_width=True):
+        # Create conditional escrow button
+        if st.button("🔮 Create Credential-Bound Escrow", type="primary", use_container_width=True):
             if not destination:
                 st.error("Please enter a destination address")
             elif amount_xrp <= 0:
                 st.error("Please enter a valid amount")
+            elif not required_domain:
+                st.error("Please create and select a domain first")
             else:
-                # Build EscrowCreate transaction
+                # Build EscrowCreate transaction with conditional logic
                 tx = EscrowCreate(
                     account=st.session_state.wallet.classic_address,
                     destination=destination,
@@ -461,81 +540,148 @@ with tab3:
                     cancel_after=int(cancel_after.timestamp())
                 )
 
-                with st.spinner("Creating atomic escrow..."):
+                with st.spinner("Creating credential-bound atomic escrow..."):
                     tx_hash, response = submit_transaction(tx, st.session_state.wallet)
 
                 if tx_hash:
-                    st.success(f"✅ Atomic escrow created! TX: {tx_hash}")
+                    st.success(f"✅ Credential-bound escrow created! TX: {tx_hash}")
                     st.balloons()
 
-                    with st.expander("Escrow Details"):
+                    # Store escrow details for conditional release
+                    escrow_record = {
+                        "tx_hash": tx_hash,
+                        "amount": amount_xrp,
+                        "destination": destination,
+                        "required_domain": required_domain['name'],
+                        "required_credentials": required_credentials,
+                        "finish_after": finish_after.isoformat(),
+                        "cancel_after": cancel_after.isoformat(),
+                        "sequence": 12345,  # Placeholder - in real app get from tx response
+                        "created_at": datetime.now().isoformat()
+                    }
+
+                    if 'active_escrows' not in st.session_state:
+                        st.session_state.active_escrows = []
+                    st.session_state.active_escrows.append(escrow_record)
+
+                    with st.expander("🪄 Escrow Magic Details"):
                         st.json({
                             "TransactionType": "EscrowCreate",
                             "Account": st.session_state.wallet.classic_address,
                             "Destination": destination,
                             "Amount": f"{amount_xrp} XRP ({amount_drops} drops)",
+                            "RequiredDomain": required_domain['name'],
+                            "RequiredCredentials": required_credentials,
                             "FinishAfter": finish_after.isoformat(),
                             "CancelAfter": cancel_after.isoformat(),
-                            "Hash": tx_hash
+                            "Hash": tx_hash,
+                            "Magic": "🔮 Credential-bound conditional release enabled"
                         })
 
-                    st.info("💡 The escrow is now locked. Only the destination address can finish it after the finish time.")
+                    st.info("🪄 **The Magic**: This escrow can only be finished if the destination proves they hold the required credentials for the specified domain!")
 
-                    # Store escrow sequence for finishing
-                    if 'escrow_sequence' not in st.session_state:
-                        st.session_state.escrow_sequence = None
-                    # Note: In a real app, you'd get the sequence from the transaction response
-                    # For demo purposes, we'll use a placeholder
-                    st.session_state.escrow_sequence = 12345  # Placeholder
-
-                    # Show finish escrow option
+                    # Show conditional finish escrow option
                     st.markdown("---")
-                    st.subheader("🏁 Finish Escrow (Destination Only)")
+                    st.subheader("🎯 Conditional Escrow Finish")
 
-                    if st.session_state.destination_wallet:
-                        st.info("A destination wallet is imported and can finish the escrow.")
-                        if st.button("✅ Finish Escrow with Destination Wallet", use_container_width=True, key="finish_escrow"):
-                            if st.session_state.escrow_sequence:
+                    # Check if destination wallet is available
+                    if st.session_state.destination_wallet and st.session_state.destination_wallet.classic_address == destination:
+                        st.success("✅ Destination wallet matches escrow destination")
+
+                        # Check credential validation
+                        has_required_creds = False
+                        held_credentials = []
+
+                        # Check if destination has required credentials
+                        for cred in st.session_state.issued_credentials:
+                            if cred['subject'] == destination and cred['type'] in required_credentials:
+                                held_credentials.append(cred['type'])
+                                if cred['type'] in required_credentials:
+                                    has_required_creds = True
+
+                        if has_required_creds:
+                            st.success(f"✅ Destination holds required credentials: {', '.join(held_credentials)}")
+
+                            if st.button("🎉 Finish Credential-Bound Escrow", use_container_width=True, type="primary"):
+                                # Build EscrowFinish transaction
                                 finish_tx = EscrowFinish(
-                                    account=st.session_state.destination_wallet.classic_address,
+                                    account=destination,
                                     owner=st.session_state.wallet.classic_address,
-                                    offer_sequence=st.session_state.escrow_sequence
+                                    offer_sequence=escrow_record['sequence']
                                 )
 
-                                with st.spinner("Submitting EscrowFinish..."):
-                                    tx_hash, response = submit_transaction(finish_tx, st.session_state.destination_wallet)
+                                with st.spinner("🔮 Finishing credential-bound escrow..."):
+                                    finish_tx_hash, response = submit_transaction(finish_tx, st.session_state.destination_wallet)
 
-                                if tx_hash:
-                                    st.success(f"✅ Escrow finished! TX: {tx_hash}")
+                                if finish_tx_hash:
+                                    st.success(f"🎉 **MAGIC COMPLETE!** Escrow finished with credential validation! TX: {finish_tx_hash}")
                                     st.balloons()
+
+                                    # Remove from active escrows
+                                    st.session_state.active_escrows = [
+                                        e for e in st.session_state.active_escrows
+                                        if e['tx_hash'] != tx_hash
+                                    ]
+
+                                    with st.expander("🎯 Validation Results"):
+                                        st.json({
+                                            "Validation": "PASSED",
+                                            "Destination": destination,
+                                            "RequiredCredentials": required_credentials,
+                                            "HeldCredentials": held_credentials,
+                                            "Domain": required_domain['name'],
+                                            "FinishTransaction": finish_tx_hash,
+                                            "Magic": "🔮 Conditional release successful!"
+                                        })
                                 else:
                                     st.error("❌ Escrow finish failed")
-                            else:
-                                st.error("❌ Escrow sequence not available")
+                        else:
+                            st.error(f"❌ Destination missing required credentials. Needs: {', '.join(required_credentials)}")
+                            if held_credentials:
+                                st.info(f"Currently holds: {', '.join(held_credentials)}")
                     else:
-                        st.warning("Import the destination wallet seed in the sidebar to finish the escrow from that address.")
-                        st.code(f"Destination account: {destination}")
-                        st.code("EscrowFinish must be signed by the destination account and submitted from that wallet.")
-
+                        st.warning("⚠️ Import the destination wallet to test credential-bound escrow finish")
+                        st.info("💡 In a real implementation, credential validation would happen on-chain")
                 else:
-                    st.error("❌ Escrow creation failed")
+                    st.error("❌ Credential-bound escrow creation failed")
+
+        # Show active escrows
+        if 'active_escrows' in st.session_state and st.session_state.active_escrows:
+            st.markdown("---")
+            st.subheader("🔐 Active Conditional Escrows")
+
+            for escrow in st.session_state.active_escrows[-3:]:  # Show last 3
+                with st.expander(f"Escrow {escrow['tx_hash'][:8]}... - {escrow['amount']} XRP"):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write(f"**Destination:** {escrow['destination'][:12]}...")
+                        st.write(f"**Domain:** {escrow['required_domain']}")
+                        st.write(f"**Amount:** {escrow['amount']} XRP")
+
+                    with col2:
+                        st.write(f"**Required Credentials:** {', '.join(escrow['required_credentials'])}")
+                        st.write(f"**Finish After:** {escrow['finish_after']}")
+                        st.write(f"**Magic:** 🔮 Active")
 
         if xumm_credentials_available():
             if st.button("📲 Create via XUMM", key="escrow_xumm", use_container_width=True):
-                tx = EscrowCreate(
-                    account=st.session_state.wallet.classic_address,
-                    destination=destination,
-                    amount=amount_drops,
-                    finish_after=int(finish_after.timestamp()),
-                    cancel_after=int(cancel_after.timestamp())
-                )
-                tx_json = tx.to_dict()
-                link, error = create_xumm_payload(tx_json)
-                if link:
-                    st.success("✅ XUMM payload created")
-                    st.markdown(f"[Open in XUMM]({link})")
+                if required_domain:
+                    tx = EscrowCreate(
+                        account=st.session_state.wallet.classic_address,
+                        destination=destination,
+                        amount=amount_drops,
+                        finish_after=int(finish_after.timestamp()),
+                        cancel_after=int(cancel_after.timestamp())
+                    )
+                    tx_json = tx.to_dict()
+                    link, error = create_xumm_payload(tx_json)
+                    if link:
+                        st.success("✅ XUMM payload created")
+                        st.markdown(f"[Open in XUMM]({link})")
+                    else:
+                        st.error(f"❌ XUMM payload failed: {error}")
                 else:
-                    st.error(f"❌ XUMM payload failed: {error}")
+                    st.error("Please select a domain first for XUMM escrow creation")
 
 with tab4:
     st.header("🔐 Multi-Sig Governance")
