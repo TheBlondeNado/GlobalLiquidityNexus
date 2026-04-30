@@ -13,8 +13,10 @@ from xrpl.models.transactions import (
     AccountSet, Payment
 )
 from xrpl.transaction import sign_and_submit
-
-# Load environment variables
+try:
+    from xumm import XummSdk
+except ImportError:
+    XummSdk = None
 load_dotenv()
 
 # Initialize session state
@@ -188,6 +190,9 @@ def xumm_credentials_available():
 
 def create_xumm_payload(tx_json):
     """Create a XUMM payload and return the deep link URL."""
+    if XummSdk is None:
+        return None, "XUMM SDK not available"
+    
     try:
         sdk = XummSdk(st.session_state.xumm_api_key, st.session_state.xumm_api_secret)
         payload = sdk.payload.create({'txjson': tx_json})
