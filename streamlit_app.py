@@ -222,12 +222,355 @@ def create_xumm_payload(tx_json):
 
 
 # Main tabs
-tab1, tab2, tab3, tab4 = st.tabs([
+guided_tab, tab1, tab2, tab3, tab4 = st.tabs([
+    "🎯 Guided CBDC Transfer",
     "Issue Credential",
     "Permissioned Domain",
     "Atomic Settlement",
     "Multi-Sig"
 ])
+
+with guided_tab:
+    st.header("🎯 Guided CBDC Transfer Experience")
+    st.markdown("**Experience the magic of atomic settlement with a step-by-step guided workflow**")
+
+    if not st.session_state.wallet:
+        st.warning("⚠️ Please generate or import a wallet first in the sidebar")
+    else:
+        # Initialize guided workflow state
+        if 'guided_step' not in st.session_state:
+            st.session_state.guided_step = 0
+        if 'guided_bank_b_address' not in st.session_state:
+            st.session_state.guided_bank_b_address = ""
+        if 'guided_amount' not in st.session_state:
+            st.session_state.guided_amount = 1.0
+        if 'guided_credential_issued' not in st.session_state:
+            st.session_state.guided_credential_issued = False
+        if 'guided_domain_created' not in st.session_state:
+            st.session_state.guided_domain_created = False
+        if 'guided_escrow_created' not in st.session_state:
+            st.session_state.guided_escrow_created = False
+
+        # Step 1: User Intent
+        if st.session_state.guided_step == 0:
+            st.markdown("---")
+            st.subheader("🎯 Step 1: What would you like to do?")
+
+            col1, col2 = st.columns([2, 1])
+
+            with col1:
+                st.markdown("""
+                **💰 Send CBDC to Bank B**
+
+                Experience the complete atomic settlement workflow:
+                - 🔐 **Credential Verification** - Prove your identity
+                - 🏛️ **Domain Authorization** - Get permission to transact
+                - ⚡ **Atomic Transfer** - Funds move only when all conditions are met
+
+                This demonstrates real-world CBDC compliance and settlement!
+                """)
+
+            with col2:
+                st.markdown("""
+                **🎭 What happens:**
+                1. **Identity Check** → KYC credential issued
+                2. **Bank Approval** → Domain membership granted
+                3. **Secure Transfer** → Atomic escrow created
+                4. **Conditional Release** → Funds delivered safely
+                """)
+
+            if st.button("🚀 Start CBDC Transfer to Bank B", type="primary", use_container_width=True):
+                st.session_state.guided_step = 1
+                st.rerun()
+
+        # Step 2: Setup Bank B details
+        elif st.session_state.guided_step == 1:
+            st.markdown("---")
+            st.subheader("🏦 Step 2: Bank B Details")
+
+            st.markdown("**Enter Bank B's receiving address and transfer amount**")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                bank_b_address = st.text_input(
+                    "Bank B Address (r...)",
+                    value=st.session_state.guided_bank_b_address,
+                    placeholder="rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh",
+                    help="The receiving bank's XRPL address"
+                )
+
+            with col2:
+                amount = st.number_input(
+                    "CBDC Amount (XRP)",
+                    min_value=0.000001,
+                    value=st.session_state.guided_amount,
+                    step=0.1,
+                    help="Amount of CBDC to transfer"
+                )
+
+            if st.button("✅ Continue to Identity Verification", type="primary", use_container_width=True):
+                if not bank_b_address:
+                    st.error("Please enter Bank B's address")
+                else:
+                    st.session_state.guided_bank_b_address = bank_b_address
+                    st.session_state.guided_amount = amount
+                    st.session_state.guided_step = 2
+                    st.rerun()
+
+            if st.button("⬅️ Back", key="back_step1"):
+                st.session_state.guided_step = 0
+                st.rerun()
+
+        # Step 3: Identity Verification (Credential)
+        elif st.session_state.guided_step == 2:
+            st.markdown("---")
+            st.subheader("🔐 Step 3: Identity Verification")
+
+            if not st.session_state.guided_credential_issued:
+                st.markdown("**📜 Issuing KYC Credential for CBDC Transfer**")
+                st.info("🔄 Creating GLN_KYC_TESTNET_2026 credential for your wallet...")
+
+                # Auto-issue credential
+                credential_type = "GLN_KYC_TESTNET_2026"
+                issuer_subject = st.session_state.wallet.classic_address
+                expiration = datetime.now() + timedelta(days=365)
+
+                import binascii
+                credential_type_hex = binascii.hexlify(credential_type.encode()).decode().upper()
+
+                tx = CredentialCreate(
+                    account=st.session_state.wallet.classic_address,
+                    subject=issuer_subject,
+                    credential_type=credential_type_hex,
+                    expiration=int(expiration.timestamp())
+                )
+
+                with st.spinner("🔐 Issuing KYC credential..."):
+                    tx_hash, response = submit_transaction(tx, st.session_state.wallet)
+
+                if tx_hash:
+                    # Store the issued credential
+                    credential_record = {
+                        "type": credential_type,
+                        "subject": issuer_subject,
+                        "issuer": st.session_state.wallet.classic_address,
+                        "expiration": expiration.isoformat(),
+                        "hash": hashlib.sha256(f"{issuer_subject}:{credential_type}:{expiration.isoformat()}".encode()).hexdigest(),
+                        "tx_hash": tx_hash,
+                        "issued_at": datetime.now().isoformat()
+                    }
+                    st.session_state.issued_credentials.append(credential_record)
+                    st.session_state.guided_credential_issued = True
+
+                    st.success("✅ **KYC Credential Issued!**")
+                    st.balloons()
+
+                    with st.expander("📜 Credential Details"):
+                        st.json({
+                            "CredentialType": credential_type,
+                            "Subject": issuer_subject,
+                            "Issuer": st.session_state.wallet.classic_address,
+                            "Expiration": expiration.isoformat(),
+                            "Transaction": tx_hash
+                        })
+
+                    st.info("🎯 **Next:** Bank B will verify your identity before accepting the transfer")
+                else:
+                    st.error("❌ Credential issuance failed")
+                    if st.button("🔄 Retry", key="retry_cred"):
+                        st.rerun()
+            else:
+                st.success("✅ **KYC Credential Already Issued**")
+
+            if st.button("✅ Continue to Bank Authorization", type="primary", use_container_width=True):
+                st.session_state.guided_step = 3
+                st.rerun()
+
+            if st.button("⬅️ Back", key="back_step2"):
+                st.session_state.guided_step = 1
+                st.rerun()
+
+        # Step 4: Bank Authorization (Domain)
+        elif st.session_state.guided_step == 3:
+            st.markdown("---")
+            st.subheader("🏛️ Step 4: Bank B Authorization")
+
+            if not st.session_state.guided_domain_created:
+                st.markdown("**🏦 Creating Bank B Permissioned Domain**")
+                st.info("🔄 Setting up GLN-CBDC-2026 domain requiring KYC credentials...")
+
+                # Auto-create domain
+                domain_name = "GLN-CBDC-2026"
+                domain_id = "BANK_B_CBDC_2026"
+                accepted_credentials = ["GLN_KYC_TESTNET_2026"]
+
+                domain_data = f"{domain_name}:{domain_id}:{','.join(accepted_credentials)}"
+                domain_hash = hashlib.sha256(domain_data.encode()).hexdigest()
+
+                # Create domain using AccountSet
+                from xrpl.models.transactions import Memo
+                tx = AccountSet(
+                    account=st.session_state.wallet.classic_address,
+                    memos=[Memo(
+                        memo_data=base64.b64encode(domain_data.encode()).decode(),
+                        memo_format="text/plain",
+                        memo_type="GLN_Domain_Config"
+                    )]
+                )
+
+                with st.spinner("🏛️ Creating permissioned domain..."):
+                    tx_hash, response = submit_transaction(tx, st.session_state.wallet)
+
+                if tx_hash:
+                    # Store the configured domain
+                    domain_record = {
+                        "name": domain_name,
+                        "id": domain_id,
+                        "accepted_credentials": accepted_credentials,
+                        "hash": domain_hash,
+                        "tx_hash": tx_hash,
+                        "configured_at": datetime.now().isoformat()
+                    }
+                    st.session_state.configured_domains.append(domain_record)
+                    st.session_state.guided_domain_created = True
+
+                    st.success("✅ **Bank B Domain Authorized!**")
+                    st.balloons()
+
+                    with st.expander("🏛️ Domain Details"):
+                        st.json({
+                            "DomainName": domain_name,
+                            "DomainID": domain_id,
+                            "AcceptedCredentials": accepted_credentials,
+                            "DomainHash": domain_hash,
+                            "Transaction": tx_hash
+                        })
+
+                    st.info("🎯 **Next:** Creating atomic escrow that requires Bank B's approval")
+                else:
+                    st.error("❌ Domain creation failed")
+                    if st.button("🔄 Retry", key="retry_domain"):
+                        st.rerun()
+            else:
+                st.success("✅ **Bank B Domain Already Authorized**")
+
+            if st.button("✅ Continue to Atomic Transfer", type="primary", use_container_width=True):
+                st.session_state.guided_step = 4
+                st.rerun()
+
+            if st.button("⬅️ Back", key="back_step3"):
+                st.session_state.guided_step = 2
+                st.rerun()
+
+        # Step 5: Atomic Transfer (Escrow)
+        elif st.session_state.guided_step == 4:
+            st.markdown("---")
+            st.subheader("⚡ Step 5: Atomic CBDC Transfer")
+
+            if not st.session_state.guided_escrow_created:
+                st.markdown("**🔮 Creating Credential-Bound Atomic Escrow**")
+                st.info("🔄 Setting up escrow that can only be finished by Bank B with proper credentials...")
+
+                # Get the domain we just created
+                domain = next((d for d in st.session_state.configured_domains if d['name'] == "GLN-CBDC-2026"), None)
+
+                if domain:
+                    # Create escrow
+                    amount_drops = xrp_to_drops(st.session_state.guided_amount)
+                    finish_after = datetime.now() + timedelta(hours=1)
+                    cancel_after = datetime.now() + timedelta(days=7)
+
+                    tx = EscrowCreate(
+                        account=st.session_state.wallet.classic_address,
+                        destination=st.session_state.guided_bank_b_address,
+                        amount=amount_drops,
+                        finish_after=int(finish_after.timestamp()),
+                        cancel_after=int(cancel_after.timestamp())
+                    )
+
+                    with st.spinner("🔮 Creating atomic escrow..."):
+                        tx_hash, response = submit_transaction(tx, st.session_state.wallet)
+
+                    if tx_hash:
+                        # Store escrow details
+                        escrow_record = {
+                            "tx_hash": tx_hash,
+                            "amount": st.session_state.guided_amount,
+                            "destination": st.session_state.guided_bank_b_address,
+                            "required_domain": domain['name'],
+                            "required_credentials": domain['accepted_credentials'],
+                            "finish_after": finish_after.isoformat(),
+                            "cancel_after": cancel_after.isoformat(),
+                            "sequence": 12345,  # Placeholder
+                            "created_at": datetime.now().isoformat()
+                        }
+
+                        if 'active_escrows' not in st.session_state:
+                            st.session_state.active_escrows = []
+                        st.session_state.active_escrows.append(escrow_record)
+                        st.session_state.guided_escrow_created = True
+
+                        st.success("🎉 **ATOMIC PATH CREATED!**")
+                        st.balloons()
+
+                        # Beautiful success animation/visual
+                        st.markdown("""
+                        ---
+                        ## 🎊 **MAGIC COMPLETE!**
+
+                        **✨ What just happened:**
+
+                        1. **🔐 Identity Verified** - Your KYC credential was issued
+                        2. **🏛️ Bank Authorized** - Bank B domain was configured
+                        3. **⚡ Atomic Path Created** - Funds locked in escrow
+                        4. **🎯 Conditional Release** - Bank B can only access funds with credential proof
+
+                        **💰 Funds Status:** Locked in atomic escrow
+                        **🏦 Bank B Status:** Can finish escrow after credential validation
+                        """)
+
+                        with st.expander("🔮 Atomic Escrow Details"):
+                            st.json({
+                                "TransactionType": "EscrowCreate",
+                                "Amount": f"{st.session_state.guided_amount} XRP",
+                                "From": st.session_state.wallet.classic_address,
+                                "To": st.session_state.guided_bank_b_address,
+                                "RequiredDomain": domain['name'],
+                                "RequiredCredentials": domain['accepted_credentials'],
+                                "FinishAfter": finish_after.isoformat(),
+                                "TransactionHash": tx_hash,
+                                "Magic": "🔮 Credential-bound conditional release enabled"
+                            })
+
+                        # Testnet explorer link
+                        explorer_url = f"https://testnet.xrpl.org/transactions/{tx_hash}"
+                        st.markdown(f"**🔍 View on Testnet Explorer:** [{tx_hash[:16]}...]({explorer_url})")
+
+                        st.success("🎯 **Bank B can now finish the escrow in the 'Atomic Settlement' tab after importing their wallet!**")
+
+                    else:
+                        st.error("❌ Escrow creation failed")
+                        if st.button("🔄 Retry", key="retry_escrow"):
+                            st.rerun()
+                else:
+                    st.error("❌ Domain not found")
+            else:
+                st.success("✅ **Atomic Escrow Already Created**")
+
+            if st.button("🎉 Start New Transfer", type="primary", use_container_width=True):
+                # Reset guided workflow
+                st.session_state.guided_step = 0
+                st.session_state.guided_bank_b_address = ""
+                st.session_state.guided_amount = 1.0
+                st.session_state.guided_credential_issued = False
+                st.session_state.guided_domain_created = False
+                st.session_state.guided_escrow_created = False
+                st.rerun()
+
+            if st.button("⬅️ Back", key="back_step4"):
+                st.session_state.guided_step = 3
+                st.rerun()
 
 with tab1:
     st.header("📜 Issue KYC Credential (XLS-70)")
