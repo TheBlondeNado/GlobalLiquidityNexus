@@ -87,18 +87,26 @@ if st.sidebar.button("Import Destination Wallet") and destination_seed_input:
 # XUMM deep-link settings
 st.sidebar.markdown("---")
 st.sidebar.header("📲 XUMM Deep Link")
-st.session_state.xumm_api_key = st.sidebar.text_input(
+
+# Get XUMM credentials from user input or session state
+xumm_api_key_input = st.sidebar.text_input(
     "XUMM API Key",
     value=st.session_state.xumm_api_key,
     type="password",
-    key="xumm_api_key"
+    key="xumm_api_key_input"
 )
-st.session_state.xumm_api_secret = st.sidebar.text_input(
+
+xumm_api_secret_input = st.sidebar.text_input(
     "XUMM API Secret",
     value=st.session_state.xumm_api_secret,
     type="password",
-    key="xumm_api_secret"
+    key="xumm_api_secret_input"
 )
+
+# Update session state with user input
+st.session_state.xumm_api_key = xumm_api_key_input
+st.session_state.xumm_api_secret = xumm_api_secret_input
+
 if st.session_state.xumm_api_key and st.session_state.xumm_api_secret:
     st.sidebar.success("✅ XUMM credentials loaded")
 else:
