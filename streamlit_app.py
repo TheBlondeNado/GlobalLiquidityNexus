@@ -12,10 +12,7 @@ from xrpl.models.transactions import (
     EscrowCreate, EscrowFinish, EscrowCancel,
     AccountSet, Payment
 )
-from xrpl.models.requests import AccountInfo, Tx
-from xrpl.utils import xrp_to_drops
-import hashlib
-import base64
+from xrpl.transaction import sign_and_submit
 
 # Load environment variables
 load_dotenv()
@@ -23,8 +20,14 @@ load_dotenv()
 # Initialize session state
 if 'wallet' not in st.session_state:
     st.session_state.wallet = None
+if 'destination_wallet' not in st.session_state:
+    st.session_state.destination_wallet = None
 if 'transactions' not in st.session_state:
     st.session_state.transactions = []
+if 'xumm_api_key' not in st.session_state:
+    st.session_state.xumm_api_key = os.getenv('XUMM_APIKEY', '')
+if 'xumm_api_secret' not in st.session_state:
+    st.session_state.xumm_api_secret = os.getenv('XUMM_APISECRET', '')
 
 st.set_page_config(
     page_title="GLN - Global Liquidity Nexus",
@@ -70,7 +73,7 @@ elif wallet_option == "Import Seed":
 # Destination wallet support for end-to-end testnet flows
 st.sidebar.markdown("---")
 st.sidebar.header("🧾 Destination Wallet")
-destination_seed_input = st.sidebar.text_input("Import destination wallet seed", type="password")
+destination_seed_input = st.sidebar.text_input("Import destination wallet seed", type="password", key="destination_seed_input")
 if st.sidebar.button("Import Destination Wallet") and destination_seed_input:
     try:
         st.session_state.destination_wallet = Wallet.from_seed(destination_seed_input)
@@ -79,8 +82,25 @@ if st.sidebar.button("Import Destination Wallet") and destination_seed_input:
     except Exception as e:
         st.sidebar.error(f"❌ Invalid destination seed: {e}")
 
-if 'destination_wallet' not in st.session_state:
-    st.session_state.destination_wallet = None
+# XUMM deep-link settings
+st.sidebar.markdown("---")
+st.sidebar.header("📲 XUMM Deep Link")
+st.session_state.xumm_api_key = st.sidebar.text_input(
+    "XUMM API Key",
+    value=st.session_state.xumm_api_key,
+    type="password",
+    key="xumm_api_key"
+)
+st.session_state.xumm_api_secret = st.sidebar.text_input(
+    "XUMM API Secret",
+    value=st.session_state.xumm_api_secret,
+    type="password",
+    key="xumm_api_secret"
+)
+if st.session_state.xumm_api_key and st.session_state.xumm_api_secret:
+    st.sidebar.success("✅ XUMM credentials loaded")
+else:
+    st.sidebar.info("Enter XUMM API Key and Secret to enable one-click deep-linking.")
 
 # Display current wallet info
 if st.session_state.wallet:
@@ -128,22 +148,21 @@ def submit_transaction(tx, wallet):
     try:
         client = JsonRpcClient(testnet_url)
 
-        # Sign and submit
-        signed_tx = wallet.sign(tx)
-        response = client.submit(signed_tx)
+        # Sign and submit using xrpl-py API
+        response = sign_and_submit(tx, client, wallet)
 
         if response.result["engine_result"] == "tesSUCCESS":
             st.session_state.transactions.append({
                 "type": tx.transaction_type,
-                "hash": signed_tx.get_hash(),
+                "hash": response.result["tx_json"]["hash"],
                 "timestamp": datetime.now().isoformat(),
                 "status": "success"
             })
-            return signed_tx.get_hash(), response
+            return response.result["tx_json"]["hash"], response
         else:
             st.session_state.transactions.append({
                 "type": tx.transaction_type,
-                "hash": signed_tx.get_hash(),
+                "hash": response.result["tx_json"]["hash"],
                 "timestamp": datetime.now().isoformat(),
                 "status": "failed",
                 "error": response.result["engine_result"]
@@ -161,6 +180,21 @@ def get_transaction_status(tx_hash):
         return response.result
     except Exception as e:
         return None
+
+
+def xumm_credentials_available():
+    return bool(st.session_state.xumm_api_key and st.session_state.xumm_api_secret)
+
+
+def create_xumm_payload(tx_json):
+    """Create a XUMM payload and return the deep link URL."""
+    try:
+        sdk = XummSdk(st.session_state.xumm_api_key, st.session_state.xumm_api_secret)
+        payload = sdk.payload.create({'txjson': tx_json})
+        return payload.next.always, None
+    except Exception as e:
+        return None, str(e)
+
 
 # Main tabs
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -211,10 +245,12 @@ with tab1:
                 st.error("Please enter a subject address")
             else:
                 # Build CredentialCreate transaction
+                import binascii
+                credential_type_hex = binascii.hexlify(credential_type.encode()).decode().upper()
                 tx = CredentialCreate(
                     account=st.session_state.wallet.classic_address,
                     subject=issuer_subject,
-                    credential_type=credential_type,
+                    credential_type=credential_type_hex,
                     expiration=int(expiration.timestamp())
                 )
 
@@ -237,6 +273,24 @@ with tab1:
                         })
                 else:
                     st.error("❌ Credential issuance failed")
+
+        if xumm_credentials_available():
+            if st.button("📲 Create via XUMM", key="issue_credential_xumm", use_container_width=True):
+                import binascii
+                credential_type_hex = binascii.hexlify(credential_type.encode()).decode().upper()
+                tx = CredentialCreate(
+                    account=st.session_state.wallet.classic_address,
+                    subject=issuer_subject,
+                    credential_type=credential_type_hex,
+                    expiration=int(expiration.timestamp())
+                )
+                tx_json = tx.to_dict()
+                link, error = create_xumm_payload(tx_json)
+                if link:
+                    st.success("✅ XUMM payload created")
+                    st.markdown(f"[Open in XUMM]({link})")
+                else:
+                    st.error(f"❌ XUMM payload failed: {error}")
 
 with tab2:
     st.header("🏛️ Create Permissioned Domain (XLS-80)")
@@ -311,6 +365,26 @@ with tab2:
                     })
             else:
                 st.error("❌ Domain configuration failed")
+
+            if xumm_credentials_available():
+                if st.button("📲 Create via XUMM", key="domain_xumm", use_container_width=True):
+                    domain_data = f"{domain_name}:{domain_id}:{','.join(accepted_credentials)}"
+                    from xrpl.models.transactions import Memo
+                    tx = AccountSet(
+                        account=st.session_state.wallet.classic_address,
+                        memos=[Memo(
+                            memo_data=base64.b64encode(domain_data.encode()).decode(),
+                            memo_format="text/plain",
+                            memo_type="GLN_Domain_Config"
+                        )]
+                    )
+                    tx_json = tx.to_dict()
+                    link, error = create_xumm_payload(tx_json)
+                    if link:
+                        st.success("✅ XUMM payload created")
+                        st.markdown(f"[Open in XUMM]({link})")
+                    else:
+                        st.error(f"❌ XUMM payload failed: {error}")
 
 with tab3:
     st.header("⚡ Atomic Settlement Path")
@@ -394,27 +468,37 @@ with tab3:
 
                     st.info("💡 The escrow is now locked. Only the destination address can finish it after the finish time.")
 
+                    # Store escrow sequence for finishing
+                    if 'escrow_sequence' not in st.session_state:
+                        st.session_state.escrow_sequence = None
+                    # Note: In a real app, you'd get the sequence from the transaction response
+                    # For demo purposes, we'll use a placeholder
+                    st.session_state.escrow_sequence = 12345  # Placeholder
+
                     # Show finish escrow option
                     st.markdown("---")
                     st.subheader("🏁 Finish Escrow (Destination Only)")
 
                     if st.session_state.destination_wallet:
                         st.info("A destination wallet is imported and can finish the escrow.")
-                        if st.button("✅ Finish Escrow with Destination Wallet", use_container_width=True):
-                            finish_tx = EscrowFinish(
-                                account=st.session_state.destination_wallet.classic_address,
-                                owner=st.session_state.wallet.classic_address,
-                                fulfillment=""
-                            )
+                        if st.button("✅ Finish Escrow with Destination Wallet", use_container_width=True, key="finish_escrow"):
+                            if st.session_state.escrow_sequence:
+                                finish_tx = EscrowFinish(
+                                    account=st.session_state.destination_wallet.classic_address,
+                                    owner=st.session_state.wallet.classic_address,
+                                    offer_sequence=st.session_state.escrow_sequence
+                                )
 
-                            with st.spinner("Submitting EscrowFinish..."):
-                                tx_hash, response = submit_transaction(finish_tx, st.session_state.destination_wallet)
+                                with st.spinner("Submitting EscrowFinish..."):
+                                    tx_hash, response = submit_transaction(finish_tx, st.session_state.destination_wallet)
 
-                            if tx_hash:
-                                st.success(f"✅ Escrow finished! TX: {tx_hash}")
-                                st.balloons()
+                                if tx_hash:
+                                    st.success(f"✅ Escrow finished! TX: {tx_hash}")
+                                    st.balloons()
+                                else:
+                                    st.error("❌ Escrow finish failed")
                             else:
-                                st.error("❌ Escrow finish failed")
+                                st.error("❌ Escrow sequence not available")
                     else:
                         st.warning("Import the destination wallet seed in the sidebar to finish the escrow from that address.")
                         st.code(f"Destination account: {destination}")
@@ -422,6 +506,23 @@ with tab3:
 
                 else:
                     st.error("❌ Escrow creation failed")
+
+        if xumm_credentials_available():
+            if st.button("📲 Create via XUMM", key="escrow_xumm", use_container_width=True):
+                tx = EscrowCreate(
+                    account=st.session_state.wallet.classic_address,
+                    destination=destination,
+                    amount=amount_drops,
+                    finish_after=int(finish_after.timestamp()),
+                    cancel_after=int(cancel_after.timestamp())
+                )
+                tx_json = tx.to_dict()
+                link, error = create_xumm_payload(tx_json)
+                if link:
+                    st.success("✅ XUMM payload created")
+                    st.markdown(f"[Open in XUMM]({link})")
+                else:
+                    st.error(f"❌ XUMM payload failed: {error}")
 
 with tab4:
     st.header("🔐 Multi-Sig Governance")

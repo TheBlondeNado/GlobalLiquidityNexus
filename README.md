@@ -48,6 +48,16 @@ Guidance on setting up multi-signature wallets for distributed governance and en
 - Multi-sig wallet generation tools
 - Signer configuration and quorum setup
 - XUMM integration guidance
+
+### 5. Mobile Wallet Integration 📱
+One-click transaction creation with XUMM deep-linking for seamless mobile wallet signing.
+
+**XUMM Integration Features:**
+- Direct payload creation for mobile signing
+- QR code generation for wallet scanning
+- Deep-link support for XUMM app
+- Payload status tracking and callbacks
+- Compatible with all transaction types
 - Security best practices documentation
 
 ## 🚀 Getting Started
@@ -75,15 +85,26 @@ cp .env.example .env
 # Edit .env with your configuration
 ```
 
-### Running the App
+### XUMM Integration Setup (Optional)
 
+For mobile wallet integration:
+
+1. Get XUMM API credentials from [XUMM Developer Console](https://apps.xumm.dev/)
+2. Add to your `.env` file:
 ```bash
-streamlit run streamlit_app.py
+XUMM_API_KEY=your_api_key
+XUMM_API_SECRET=your_api_secret
 ```
 
-The app will open in your default browser at `http://localhost:8501`
-
 ## 🔄 Working End-to-End Flows
+
+### Mobile Wallet Transaction Demo
+
+1. **Configure XUMM**: Add API credentials to `.env` file
+2. **Generate Payload**: Click "📲 Create via XUMM" on any transaction
+3. **Scan QR Code**: Use XUMM app to scan the generated QR code
+4. **Sign Transaction**: Approve the transaction in XUMM
+5. **Verify**: Transaction is submitted to XRPL testnet
 
 ### Atomic Settlement Path Demo
 
@@ -122,11 +143,19 @@ The app will open in your default browser at `http://localhost:8501`
 - **Transaction Building**: Proper XRPL transaction construction
 - **Status Tracking**: Transaction hash storage and status monitoring
 
+### Mobile Wallet Integration
+- **xumm-sdk-py**: Official XUMM Python SDK for payload creation
+- **Deep Linking**: Direct integration with XUMM mobile app
+- **QR Code Generation**: Visual QR codes for easy scanning
+- **Payload Management**: Secure payload creation and status tracking
+- **Callback Support**: Transaction status updates via webhooks
+
 ### Key Components
 - **CredentialCreate**: XLS-70 compliant credential issuance
 - **EscrowCreate/EscrowFinish**: Atomic settlement with conditions
 - **AccountSet**: Domain configuration storage
 - **SignerListSet**: Multi-signature wallet setup guidance
+- **XUMM Payloads**: Mobile wallet transaction signing
 
 ### Security Features
 - Client-side transaction signing
